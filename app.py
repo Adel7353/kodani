@@ -5,8 +5,8 @@ import os
 app = Flask(__name__)
 
 # 🔒 نقرأ مفتاح الاتصال من متغير بيئة (وليس مكتوب داخل الكود)
-# MONGO_URI = os.environ.get("MONGO_URI")
-MONGO_URI = "mongodb+srv://adel735377527_db_user:<db_password>@cluster0.9qxwu8d.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGO_URI = os.environ.get("MONGO_URI")
+
 # إنشاء الاتصال مع قاعدة البيانات
 client = MongoClient(MONGO_URI)
 db = client["myDB"]
