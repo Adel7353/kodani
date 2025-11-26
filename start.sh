@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 your_bot_file.py
+python3 bot1.py
