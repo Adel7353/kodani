@@ -122,7 +122,7 @@ class BotController:
 controller = BotController(bot)
 
 # إضافة المطور كأدمن
-DEVELOPER_ID = 1675396915 
+DEVELOPER_ID = '1675396915'
 controller.add_admin(DEVELOPER_ID)
 
 # نظام الاشتراك الإجباري
