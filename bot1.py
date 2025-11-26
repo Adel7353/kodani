@@ -952,9 +952,7 @@ if __name__ == "__main__":
     except:
         pass
     
-    # تشغيل المراقبة تلقائياً
-    monitor.start_monitoring()
-    print("✅ Monitoring system activated")
+    
     
     # تشغيل البوت مع إعادة الاتصال التلقائي
     while True:
