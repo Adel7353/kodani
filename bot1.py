@@ -3,10 +3,8 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import sqlite3
 import random
 import time
-import threading
 from datetime import datetime
 import requests
-import json
 import os
 
 # إعدادات البوت
@@ -90,7 +88,7 @@ class BotController:
         self.bot = bot_instance
         self.admins = []
         self.waiting_for_forward = {}  # تخزين المستخدمين المنتظرين لإعادة التوجيه
-        self.interaction_thread = None  # thread واحد للتفاعلات
+        self.is_interacting = False  # حالة التفاعل الحالية
         
     def add_admin(self, user_id):
         if user_id not in self.admins:
@@ -112,14 +110,13 @@ class BotController:
         if user_id in self.waiting_for_forward:
             del self.waiting_for_forward[user_id]
     
-    def start_interaction_thread(self, target_func, args=()):
-        """بدء thread تفاعل واحد فقط"""
-        if self.interaction_thread and self.interaction_thread.is_alive():
-            return False  # يوجد thread نشط بالفعل
-        
-        self.interaction_thread = threading.Thread(target=target_func, args=args, daemon=True)
-        self.interaction_thread.start()
-        return True
+    def set_interacting(self, status):
+        """تعيين حالة التفاعل"""
+        self.is_interacting = status
+    
+    def can_interact(self):
+        """التحقق إذا كان يمكن بدء تفاعل جديد"""
+        return not self.is_interacting
 
 controller = BotController(bot)
 
@@ -201,22 +198,13 @@ class WelcomeMessages:
 
 welcome_messages = WelcomeMessages()
 
-# نظام التفاعل اليدوي
+# نظام التفاعل اليدوي (بدون threading)
 class ManualInteraction:
     def __init__(self):
-        self.active_interactions = {}
-        self.current_report_message_id = {}  # تخزين آخر رسالة تقرير لكل مستخدم
-    
-    def update_report_message(self, user_id, message_id):
-        """تحديث رسالة التقرير الحالية للمستخدم"""
-        self.current_report_message_id[user_id] = message_id
-    
-    def get_report_message_id(self, user_id):
-        """الحصول على رسالة التقرير الحالية للمستخدم"""
-        return self.current_report_message_id.get(user_id)
+        self.current_report_message_id = {}
     
     def interact_with_forwarded_post(self, channel_id, message_id, user_id, original_message_id):
-        """التفاعل مع منشور تم توجيهه"""
+        """التفاعل مع منشور تم توجيهه - بدون threading"""
         cursor = db.conn.cursor()
         
         # جلب جميع البوتات النشطة لهذه القناة
@@ -233,11 +221,11 @@ class ManualInteraction:
         
         if total_bots == 0:
             bot.edit_message_text(
-                "❌ **لا توجد بوتات نشطة في هذه القناة.**",
+                "❌ لا توجد بوتات نشطة في هذه القناة.",
                 user_id,
                 original_message_id
             )
-            return {"successful": [], "failed": [], "total_bots": 0}
+            return
         
         # تحديث الرسالة الأصلية لتظهر التقدم
         progress_message = self.create_progress_message(channel_id, message_id, 0, total_bots, successful_interactions, failed_interactions)
@@ -250,6 +238,7 @@ class ManualInteraction:
         except:
             pass
         
+        # التفاعل المباشر بدون threads
         for index, bot_data in enumerate(bots):
             bot_token, bot_username, owner_id = bot_data
             
@@ -262,8 +251,8 @@ class ManualInteraction:
             else:
                 failed_interactions.append(bot_username)
             
-            # تحديث التقدم كل 5 بوتات أو عند الانتهاء
-            if (index + 1) % 5 == 0 or (index + 1) == total_bots:
+            # تحديث التقدم كل 3 بوتات أو عند الانتهاء
+            if (index + 1) % 3 == 0 or (index + 1) == total_bots:
                 progress = index + 1
                 progress_message = self.create_progress_message(channel_id, message_id, progress, total_bots, successful_interactions, failed_interactions)
                 try:
@@ -276,7 +265,7 @@ class ManualInteraction:
                     pass
             
             # وقت انتظار بين التفاعلات
-            time.sleep(random.uniform(2, 5))
+            time.sleep(random.uniform(3, 6))
         
         # إرسال التقرير النهائي
         final_report = self.create_final_report(channel_id, message_id, successful_interactions, failed_interactions, total_bots)
@@ -381,7 +370,6 @@ def start_command(message):
                 channel_url = f"https://t.me/{channel_username}"
                 keyboard.add(InlineKeyboardButton(f"📺 {channel_title}", url=channel_url))
             else:
-                # إذا لم يكن هناك معرف، نستخدم الرابط بالمعرف الرقمي
                 channel_url = f"https://t.me/c/{channel_id.replace('-100', '')}"
                 keyboard.add(InlineKeyboardButton(f"📺 {channel_title}", url=channel_url))
         
@@ -394,11 +382,9 @@ def start_command(message):
         )
         return
     
-    # إذا كان المستخدم مشترك في جميع القنوات
     if controller.is_admin(user_id):
         show_admin_panel(message)
     else:
-        # إرسال رسالة الترحيب للمستخدمين العاديين
         welcome_text = welcome_messages.current_welcome_message
         bot.reply_to(message, welcome_text)
 
@@ -438,7 +424,7 @@ def show_admin_panel(message):
         reply_markup=keyboard
     )
 
-# نظام إدارة القنوات - مصحح
+# نظام إدارة القنوات
 @bot.callback_query_handler(func=lambda call: call.data == "manage_channels")
 def manage_channels(call):
     keyboard = InlineKeyboardMarkup()
@@ -471,22 +457,374 @@ def add_channel_step2(message):
     try:
         channel_input = message.text.strip()
         
-        # محاولة الحصول على معلومات القناة
         try:
             chat = bot.get_chat(channel_input)
         except Exception as e:
             bot.send_message(message.chat.id, f"❌ لا يمكن الوصول إلى القناة: {str(e)}")
             return
         
-        # تنظيف البيانات
         channel_id = str(chat.id)
         channel_username = getattr(chat, 'username', '')
         channel_title = getattr(chat, 'title', 'Unknown Channel')
         
-        # إدخال في قاعدة البيانات
         cursor = db.conn.cursor()
         cursor.execute(
             'INSERT OR REPLACE INTO channels (channel_id, channel_username, channel_title, owner_id) VALUES (?, ?, ?, ?)',
+            (channel_id, channel_username, channel_title, message.from_user.id)
+        )
+        db.conn.commit()
+        
+        bot.send_message(message.chat.id, f"✅ تمت إضافة القناة: {channel_title}")
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ فشل في إضافة القناة: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "list_channels")
+def list_channels(call):
+    cursor = db.conn.cursor()
+    cursor.execute('SELECT channel_id, channel_username, channel_title FROM channels')
+    channels = cursor.fetchall()
+    
+    if not channels:
+        bot.edit_message_text(
+            "❌ لا توجد قنوات مضافة.",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        return
+    
+    channels_text = "📺 قائمة القنوات:\n\n"
+    
+    for index, channel in enumerate(channels, 1):
+        channel_id, channel_username, channel_title = channel
+        username_display = f"@{channel_username}" if channel_username else "لا يوجد معرف"
+        channels_text += f"{index}. {channel_title}\n"
+        channels_text += f"   🆔: {channel_id}\n"
+        channels_text += f"   👤: {username_display}\n\n"
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="manage_channels"))
+    
+    bot.edit_message_text(
+        channels_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+# نظام إدارة البوتات
+@bot.callback_query_handler(func=lambda call: call.data == "manage_bots")
+def manage_bots(call):
+    keyboard = InlineKeyboardMarkup()
+    
+    buttons = [
+        [InlineKeyboardButton("➕ إضافة بوت", callback_data="add_bot")],
+        [InlineKeyboardButton("📋 قائمة البوتات", callback_data="list_bots")],
+        [InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")]
+    ]
+    
+    for row in buttons:
+        keyboard.row(*row)
+    
+    bot.edit_message_text(
+        "🤖 إدارة البوتات\n\nاختر الإجراء المطلوب:",
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "add_bot")
+def add_bot_step1(call):
+    cursor = db.conn.cursor()
+    cursor.execute('SELECT channel_id, channel_username, channel_title FROM channels')
+    channels = cursor.fetchall()
+    
+    if not channels:
+        bot.answer_callback_query(call.id, "❌ لا توجد قنوات مضافة. أضف قناة أولاً.")
+        return
+    
+    keyboard = InlineKeyboardMarkup()
+    for channel in channels:
+        channel_id, username, title = channel
+        name = f"{title} (@{username})" if username else f"{title} (ID: {channel_id})"
+        keyboard.add(InlineKeyboardButton(name, callback_data=f"select_channel_{channel_id}"))
+    
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="manage_bots"))
+    
+    bot.edit_message_text(
+        "📺 اختر القناة لإضافة البوت لها:",
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_channel_"))
+def add_bot_step2(call):
+    channel_id = call.data.replace("select_channel_", "")
+    
+    msg = bot.send_message(
+        call.message.chat.id,
+        f"🔐 أرسل توكن البوت لإضافته للقناة {channel_id}:"
+    )
+    bot.register_next_step_handler(msg, add_bot_step3, channel_id)
+
+def add_bot_step3(message, channel_id):
+    try:
+        bot_token = message.text.strip()
+        test_bot = telebot.TeleBot(bot_token)
+        bot_info = test_bot.get_me()
+        
+        cursor = db.conn.cursor()
+        cursor.execute(
+            'INSERT OR IGNORE INTO bots (bot_token, bot_username, channel_id, added_by) VALUES (?, ?, ?, ?)',
+            (bot_token, bot_info.username, channel_id, message.from_user.id)
+        )
+        db.conn.commit()
+        
+        bot.send_message(
+            message.chat.id,
+            f"✅ تمت إضافة البوت: @{bot_info.username}\n"
+            f"📺 للقناة: {channel_id}"
+        )
+        
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ فشل في إضافة البوت: {str(e)}")
+
+@bot.callback_query_handler(func=lambda call: call.data == "list_bots")
+def list_bots(call):
+    cursor = db.conn.cursor()
+    cursor.execute('''
+        SELECT b.bot_username, b.channel_id, b.is_active, c.channel_title 
+        FROM bots b 
+        LEFT JOIN channels c ON b.channel_id = c.channel_id
+    ''')
+    bots = cursor.fetchall()
+    
+    if not bots:
+        bot.edit_message_text(
+            "❌ لا توجد بوتات مضافة.",
+            call.message.chat.id,
+            call.message.message_id
+        )
+        return
+    
+    bots_text = "🤖 قائمة البوتات:\n\n"
+    
+    for index, bot_data in enumerate(bots, 1):
+        bot_username, channel_id, is_active, channel_title = bot_data
+        status = "🟢 نشط" if is_active else "🔴 غير نشط"
+        bots_text += f"{index}. @{bot_username}\n"
+        bots_text += f"   📺: {channel_title or channel_id}\n"
+        bots_text += f"   🏷: {channel_id}\n"
+        bots_text += f"   📊: {status}\n\n"
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="manage_bots"))
+    
+    bot.edit_message_text(
+        bots_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+# التفاعل اليدوي (بدون threading)
+@bot.callback_query_handler(func=lambda call: call.data == "manual_interact")
+def manual_interact(call):
+    # التحقق من عدم وجود تفاعل نشط
+    if not controller.can_interact():
+        bot.answer_callback_query(call.id, "⏳ يوجد تفاعل قيد التنفيذ حالياً. يرجى الانتظار...")
+        return
+    
+    cursor = db.conn.cursor()
+    cursor.execute('SELECT channel_id, channel_username, channel_title FROM channels')
+    channels = cursor.fetchall()
+    
+    if not channels:
+        bot.answer_callback_query(call.id, "❌ لا توجد قنوات مضافة. أضف قناة أولاً.")
+        return
+    
+    keyboard = InlineKeyboardMarkup()
+    for channel in channels:
+        channel_id, username, title = channel
+        name = f"{title} (@{username})" if username else f"{title} (ID: {channel_id})"
+        keyboard.add(InlineKeyboardButton(name, callback_data=f"interact_channel_{channel_id}"))
+    
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    
+    bot.edit_message_text(
+        "🔄 اختر القناة للتفاعل مع منشوراتها:",
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("interact_channel_"))
+def select_channel_for_interaction(call):
+    # التحقق من عدم وجود تفاعل نشط
+    if not controller.can_interact():
+        bot.answer_callback_query(call.id, "⏳ يوجد تفاعل قيد التنفيذ حالياً. يرجى الانتظار...")
+        return
+        
+    channel_id = call.data.replace("interact_channel_", "")
+    
+    # حفظ حالة الانتظار للمستخدم
+    controller.set_waiting_for_forward(call.from_user.id, channel_id)
+    
+    bot.edit_message_text(
+        f"📨 تم اختيار القناة: {channel_id}\n\n"
+        f"⏳ الآن قم بتوجيه المنشور الذي تريد التفاعل عليه من القناة إلى هذا البوت...\n\n"
+        f"💡 طريقة الاستخدام:\n"
+        f"1. اذهب إلى القناة المطلوبة\n"
+        f"2. اختر المنشور الذي تريد التفاعل عليه\n"
+        f"3. اضغط على زر Forward (إعادة إرسال)\n"
+        f"4. اختر هذا البوت كوجهة الإرسال",
+        call.message.chat.id,
+        call.message.message_id
+    )
+
+# معالجة المنشورات الموجهة (بدون threading)
+@bot.message_handler(content_types=['text', 'photo', 'video', 'document', 'audio', 'voice'])
+def handle_forwarded_message(message):
+    user_id = message.from_user.id
+    
+    # التحقق إذا كان المستخدم ينتظر توجيه منشور
+    channel_id = controller.get_waiting_channel(user_id)
+    if not channel_id:
+        return
+    
+    # التحقق من عدم وجود تفاعل نشط
+    if not controller.can_interact():
+        bot.reply_to(message, "⏳ يوجد تفاعل قيد التنفيذ حالياً. يرجى الانتظار...")
+        controller.clear_waiting(user_id)
+        return
+    
+    # التحقق إذا كانت الرسالة موجهة من قناة
+    if not message.forward_from_chat:
+        bot.reply_to(message, "❌ يجب توجيه منشور من قناة وليس من مستخدم.")
+        controller.clear_waiting(user_id)
+        return
+    
+    # التحقق من وجود معرف الرسالة
+    if not hasattr(message, 'forward_from_message_id') or not message.forward_from_message_id:
+        bot.reply_to(message, "❌ لا يمكن الحصول على معرف المنشور. حاول توجيه منشور آخر.")
+        controller.clear_waiting(user_id)
+        return
+    
+    forwarded_channel_id = str(message.forward_from_chat.id)
+    forwarded_message_id = message.forward_from_message_id
+    
+    # التحقق إذا كانت القناة الموجه منها هي نفس القناة المختارة
+    if forwarded_channel_id != channel_id:
+        bot.reply_to(message, f"❌ هذا المنشور ليس من القناة المختارة.\nالقناة المختارة: {channel_id}\nقناة المنشور: {forwarded_channel_id}")
+        controller.clear_waiting(user_id)
+        return
+    
+    # تعيين حالة التفاعل
+    controller.set_interacting(True)
+    
+    # إرسال رسالة بدء التفاعل
+    start_msg = bot.send_message(
+        message.chat.id,
+        "🔄 جاري التفاعل مع المنشور بواسطة جميع البوتات..."
+    )
+    
+    try:
+        # التفاعل المباشر بدون threads
+        result = manual_interaction.interact_with_forwarded_post(
+            channel_id, forwarded_message_id, user_id, start_msg.message_id
+        )
+        
+    except Exception as e:
+        error_message = f"❌ حدث خطأ أثناء التفاعل: {str(e)}"
+        try:
+            bot.edit_message_text(
+                error_message,
+                user_id,
+                start_msg.message_id
+            )
+        except:
+            pass
+    
+    finally:
+        # تنظيف الحالة
+        controller.set_interacting(False)
+        controller.clear_waiting(user_id)
+
+# باقي الأوامر (الإحصائيات، الاشتراك الإجباري، رسائل الترحيب) تبقى كما هي
+@bot.callback_query_handler(func=lambda call: call.data == "stats")
+def show_stats(call):
+    cursor = db.conn.cursor()
+    
+    cursor.execute('SELECT COUNT(*) FROM channels')
+    channels_count = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM bots WHERE is_active = 1')
+    active_bots = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM bots')
+    total_bots = cursor.fetchone()[0]
+    
+    cursor.execute('SELECT COUNT(*) FROM forced_subscription WHERE is_active = 1')
+    forced_channels_count = cursor.fetchone()[0]
+    
+    stats_text = f"""📊 إحصائيات البوت:
+
+📺 عدد القنوات: {channels_count}
+🤖 البوتات النشطة: {active_bots}
+🤖 إجمالي البوتات: {total_bots}
+📢 قنوات الاشتراك الإجباري: {forced_channels_count}
+⏰ آخر تحديث: {datetime.now().strftime('%H:%M:%S')}"""
+    
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("🔄 تحديث", callback_data="stats"))
+    keyboard.add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    
+    bot.edit_message_text(
+        stats_text,
+        call.message.chat.id,
+        call.message.message_id,
+        reply_markup=keyboard
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data == "back_to_main")
+def back_to_main(call):
+    show_admin_panel(call.message)
+
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    if message.text and message.text.startswith('/'):
+        bot.reply_to(message, "⚠️ الأمر غير معروف. استخدم /start للبدء.")
+
+if __name__ == "__main__":
+    print("🤖 Bot is starting with NO THREADING system...")
+    print("🚫 Threading disabled to prevent conflicts")
+    print("🔄 Using single process for all operations")
+    
+    # تنظيف أي عمليات سابقة
+    try:
+        bot.stop_polling()
+    except:
+        pass
+    
+    # انتظار لتفادي التعارض
+    print("⏳ Waiting 15 seconds to avoid conflicts...")
+    time.sleep(15)
+    
+    # التشغيل الرئيسي بدون threads
+    while True:
+        try:
+            print("🔄 Starting bot polling with skip_pending...")
+            bot.infinity_polling(
+                timeout=60,
+                long_polling_timeout=30,
+                skip_pending=True,  # تخطي التحديثات القديمة
+                allowed_updates=['message', 'callback_query']  # تحديثات محددة فقط
+            )
+        except Exception as e:
+            print(f"🔴 Polling error: {e}")
+            print("🔄 Restarting in 15 seconds...")
+            time.sleep(15)            'INSERT OR REPLACE INTO channels (channel_id, channel_username, channel_title, owner_id) VALUES (?, ?, ?, ?)',
             (channel_id, channel_username, channel_title, message.from_user.id)
         )
         db.conn.commit()
