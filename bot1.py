@@ -447,8 +447,7 @@ def manage_channels(call):
         "📺 **إدارة القنوات**\n\nاختر الإجراء المطلوب:",
         call.message.chat.id,
         call.message.message_id,
-        reply_markup=keyboard,
-        parse_mode='HTML'
+        reply_markup=keyboard
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_channel")
@@ -942,16 +941,31 @@ def handle_all_messages(message):
 
 # تشغيل البوت
 if __name__ == "__main__":
-    print("🤖 Bot is running with SINGLE THREAD system...")
-    print("📨 Users can forward posts for interaction")
-    print("🔄 Using edit_message_text to reduce messages")
-    print("📢 Forced subscription system activated")
-    print("👋 Welcome message system activated")
+    print("⏳ Waiting 5 seconds to avoid conflicts...")
+    time.sleep(5)
     
+    print("🤖 Bot is starting on cloud environment...")
+    
+    # إيقاف أي عملية سابقة
+    try:
+        bot.stop_polling()
+    except:
+        pass
+    
+    # تشغيل المراقبة تلقائياً
+    monitor.start_monitoring()
+    print("✅ Monitoring system activated")
+    
+    # تشغيل البوت مع إعادة الاتصال التلقائي
     while True:
         try:
-            bot.infinity_polling(timeout=30,long_polling_timeout=20,skip_pending=True)
+            print("🔄 Starting bot polling...")
+            bot.infinity_polling(
+                timeout=60, 
+                long_polling_timeout=30,
+                allowed_updates=['message', 'callback_query']
+            )
         except Exception as e:
             print(f"🔴 Polling error: {e}")
-            print("🔄 Restarting bot in 5 seconds...")
-            time.sleep(5)
+            print("🔄 Restarting in 15 seconds...")
+            time.sleep(15)
