@@ -1410,14 +1410,8 @@ if __name__ == "__main__":
     print("🔄 Using single process for all operations")
     
     # تنظيف أي عمليات سابقة
-    try:
-        bot.stop_polling()
-    except:
-        pass
     
-    # انتظار لتفادي التعارض
-    print("⏳ Waiting 15 seconds to avoid conflicts...")
-    time.sleep(15)
+
     
     # التشغيل الرئيسي بدون threads
     while True:
