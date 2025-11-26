@@ -602,14 +602,32 @@ def run_interaction(channel_id, message_id, user_id, original_message_id):
         controller.clear_waiting(user_id)
 
 if __name__ == "__main__":
-    print("🤖 Bot is running with SINGLE THREAD system...")
-    print("📨 Users can forward posts for interaction")
-    print("🔄 Using edit_message_text to reduce messages")
+    print("🤖 Bot is starting with conflict prevention...")
     
+    # تنظيف أي عمليات سابقة
+    try:
+        bot.stop_polling()
+    except:
+        pass
+    
+    # انتظار لتفادي التعارض
+    print("⏳ Waiting 10 seconds to avoid conflicts...")
+    time.sleep(10)
+    
+    # إعدادات خاصة للاستضافة السحابية
+    import os
+    
+    # استخدام skip_pending لتخطي التحديثات القديمة
     while True:
         try:
-            bot.infinity_polling(timeout=30, long_polling_timeout=20, skip_pending=True)
+            print("🔄 Starting bot polling with skip_pending...")
+            bot.infinity_polling(
+                timeout=60,
+                long_polling_timeout=30,
+                skip_pending=True,  # تخطي التحديثات القديمة
+                allowed_updates=['message', 'callback_query']  # تحديثات محددة فقط
+            )
         except Exception as e:
             print(f"🔴 Polling error: {e}")
-            print("🔄 Restarting bot in 5 seconds...")
-            time.sleep(5)
+            print("🔄 Restarting in 15 seconds...")
+            time.sleep(15)
