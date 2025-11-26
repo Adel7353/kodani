@@ -448,7 +448,7 @@ def manage_channels(call):
         call.message.chat.id,
         call.message.message_id,
         reply_markup=keyboard,
-        parse_mode='Markdown'
+        parse_mode='HTML'
     )
 
 @bot.callback_query_handler(func=lambda call: call.data == "add_channel")
