@@ -939,31 +939,15 @@ def handle_all_messages(message):
     if message.text and message.text.startswith('/'):
         bot.reply_to(message, "⚠️ **الأمر غير معروف. استخدم** /start **للبدء.**", parse_mode='Markdown')
 
-# تشغيل البوت
 if __name__ == "__main__":
-    print("⏳ Waiting 5 seconds to avoid conflicts...")
-    time.sleep(5)
+    print("🤖 Bot is running with SINGLE THREAD system...")
+    print("📨 Users can forward posts for interaction")
+    print("🔄 Using edit_message_text to reduce messages")
     
-    print("🤖 Bot is starting on cloud environment...")
-    
-    # إيقاف أي عملية سابقة
-    try:
-        bot.stop_polling()
-    except:
-        pass
-    
-    
-    
-    # تشغيل البوت مع إعادة الاتصال التلقائي
     while True:
         try:
-            print("🔄 Starting bot polling...")
-            bot.infinity_polling(
-                timeout=60, 
-                long_polling_timeout=30,
-                allowed_updates=['message', 'callback_query']
-            )
+            bot.infinity_polling(timeout=30,long_polling_timeout=20,skip_pending=True)
         except Exception as e:
             print(f"🔴 Polling error: {e}")
-            print("🔄 Restarting in 15 seconds...")
-            time.sleep(15)
+            print("🔄 Restarting bot in 5 seconds...")
+            time.sleep(5)
