@@ -13,6 +13,8 @@ import os
 TOKEN = "7679895284:AAE-_mwAKvJUqfonAxEn7Zj-1p6CtpAfxnw"
 bot = telebot.TeleBot(TOKEN)
 
+DEVELOPER_ID = 1675396915
+
 # قائمة الإيموجيات المدعومة في تفاعلات تليجرام
 SUPPORTED_EMOJIS = ["👍", "❤️", "🔥", "👏", "😍", "🤩", "🎉", "🙌", "🚀", "⭐"]
 
@@ -122,7 +124,7 @@ class BotController:
 controller = BotController(bot)
 
 # إضافة المطور كأدمن
-DEVELOPER_ID = 1675396915
+
 controller.add_admin(DEVELOPER_ID)
 
 # نظام الاشتراك الإجباري
